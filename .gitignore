@@ -261,5 +261,5 @@ frontend/.vite/
 
 # 기타 불필요한 파일들
 *.jar
-temp_venv/
+*.temp_venv/
 venv_wsl/*.example
