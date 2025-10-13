@@ -1,0 +1,161 @@
+services:
+  mongo:
+    image: mongo:6
+    container_name: fx_mongo
+    restart: unless-stopped
+    ports: ["27017:27017"]
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:7
+    container_name: fx_redis
+    restart: unless-stopped
+    ports: ["6379:6379"]
+
+  backend:
+    build: ./backend
+    container_name: fx_backend
+    env_file: ./backend/.env
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/fx_alert
+      - REDIS_URL=redis://redis:6379/0
+      - CORS_ALLOW_ORIGINS=http://localhost:5173
+    ports: ["8000:8000"]
+    depends_on: [mongo, redis]
+
+  celery_worker:
+    build: ./backend
+    container_name: fx_celery_worker
+    command: ["celery", "-A", "app.tasks.currency_tasks.celery_app", "worker", "-l", "INFO"]
+    env_file: ./backend/.env
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/fx_alert
+      - REDIS_URL=redis://redis:6379/0
+    depends_on: [backend, mongo, redis]
+
+  celery_beat:
+    build: ./backend
+    container_name: fx_celery_beat
+    command: ["celery", "-A", "app.tasks.currency_tasks.celery_app", "beat", "-l", "INFO"]
+    env_file: ./backend/.env
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/fx_alert
+      - REDIS_URL=redis://redis:6379/0
+    depends_on: [backend, mongo, redis]
+
+  frontend:
+    build: ./frontend
+    container_name: fx_frontend
+    environment:
+      - VITE_API_BASE_URL=http://backend:8000/api/v1
+    ports: ["5173:80"]
+    depends_on: [backend]
+
+ # --- Airflow & Spark 서비스  ---
+  postgres:
+    image: postgres:13
+    container_name: airflow_postgres
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+
+  airflow-redis:
+    image: redis:7
+    container_name: airflow_redis
+    ports:
+      - "6380:6379"
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    container_name: airflow_init
+    depends_on:
+      - postgres
+      - airflow-redis
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://airflow-redis:6379/1
+    command: >
+      bash -c "airflow db init &&
+      airflow users create --role Admin --username airflow --password airflow --firstname Anonymous --lastname User --email admin@example.org"
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    container_name: airflow_webserver
+    restart: always
+    depends_on:
+      - airflow-scheduler
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/keys:/opt/airflow/keys
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://airflow-redis:6379/1
+    command: ["airflow", "webserver"]
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    container_name: airflow_scheduler
+    restart: always
+    depends_on:
+      - postgres
+      - airflow-redis
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/keys:/opt/airflow/keys
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__CELERY__BROKER_URL=redis://airflow-redis:6379/1
+      - GCP_SERVICE_ACCOUNT_KEY_PATH=/opt/airflow/keys/fx-alert-currency-9df38b972814.json
+      - BIGQUERY_PROJECT_ID=fx-alert-currency
+    command: ["airflow", "scheduler"]
+
+  spark-master:
+    image: apache/spark:3.5.1-scala2.12-java17-python3-ubuntu
+    container_name: spark-master
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+    volumes:
+      - .:/opt/spark/app # 프로젝트 루트를 Spark 컨테이너의 /opt/spark/app으로 마운트
+
+  spark-worker:
+    image: apache/spark:3.5.1-scala2.12-java17-python3-ubuntu
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8080"
+    volumes:
+      - .:/opt/spark/app # 프로젝트 루트를 Spark 컨테이너의 /opt/spark/app으로 마운트
+    command: "/opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
+
+volumes:
+  mongo_data:
+  postgres-db-volume:
