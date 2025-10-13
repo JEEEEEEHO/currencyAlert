@@ -263,3 +263,4 @@ frontend/.vite/
 *.jar
 *.temp_venv/
 venv_wsl/*.example
+temp_venv/
