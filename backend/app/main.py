@@ -38,12 +38,34 @@ app.add_middleware(
 )
 
 # Beanie 초기화 (앱 시작 시 1회)
+# 주니어 개발자님께: MongoDB 연결은 사용자 인증과 알림 기능에만 필요합니다.
+# 환율 조회 API(/api/v1/currency/latest)는 MongoDB 없이도 작동합니다.
 @app.on_event("startup")
 async def app_init():
-    client = AsyncIOMotorClient(settings.MONGODB_URI)
-    db = client.get_default_database()
-    await init_beanie(database=db, document_models=[User, NotificationSetting, RateStat])
-    # 참고: RateStat(환율 통계) Document는 services/currency_service.py 내부에 정의됨.
+    try:
+        # MongoDB 연결 시도
+        # 주니어 개발자님께: AsyncIOMotorClient는 비동기 MongoDB 클라이언트입니다.
+        # 연결 문자열은 mongodb://호스트:포트/데이터베이스 형식입니다.
+        client = AsyncIOMotorClient(settings.MONGODB_URI, serverSelectionTimeoutMS=5000)
+        # 주니어 개발자님께: serverSelectionTimeoutMS는 서버 선택 타임아웃(밀리초)입니다.
+        # 5초 안에 연결하지 못하면 타임아웃 에러가 발생합니다.
+        
+        # 연결 테스트
+        # 주니어 개발자님께: admin 명령을 실행하여 실제로 연결되는지 확인합니다.
+        await client.admin.command('ping')
+        
+        db = client.get_default_database()
+        await init_beanie(database=db, document_models=[User, NotificationSetting, RateStat])
+        # 참고: RateStat(환율 통계) Document는 services/currency_service.py 내부에 정의됨.
+        print(f"[INFO] MongoDB 연결 성공: {settings.MONGODB_URI}")
+    except Exception as e:
+        # MongoDB 연결 실패 시에도 서버는 시작됩니다
+        # 주니어 개발자님께: 환율 조회 API는 MongoDB 없이도 작동하므로,
+        # 연결 실패해도 서버를 시작할 수 있습니다. 다만 사용자 인증과 알림 기능은 사용할 수 없습니다.
+        print(f"[WARNING] MongoDB 연결 실패: {e}")
+        print("[INFO] 서버는 계속 시작됩니다. 환율 조회 API는 정상 작동하지만, 사용자 인증 및 알림 기능은 사용할 수 없습니다.")
+        print("[INFO] MongoDB를 시작하려면: mongod (MongoDB 서비스 시작)")
+        print(f"[INFO] 또는 MongoDB URI를 확인하세요: {settings.MONGODB_URI}")
 
 # 간단한 헬스체크
 @app.get("/")

@@ -43,8 +43,12 @@ def get_exchange_rate_data(start_date: str, end_date: str) -> pd.DataFrame:
     )
     try:
         # API 요청 보내기
-        response = requests.get(url, timeout=20)
+        print("--- [탐침 1] requests.get() 호출 직전 ---") # <--- 추가
+        response = requests.get(url, timeout=30) # 타임아웃을 넉넉히 30초로 늘려봅니다.
+        print("--- [탐침 2] requests.get() 호출 완료 ---") # <--- 추가
         response.raise_for_status() # HTTP 오류 발생 시 예외 발생
+        data = response.json()
+        
         
         # 응답 데이터를 JSON 형식으로 파싱
         data = response.json()
@@ -96,25 +100,39 @@ def upload_dataframe_to_gcs(df: pd.DataFrame, bucket_name: str, destination_blob
         bucket_name (str): GCS 버킷 이름.
         destination_blob_name (str): GCS에 저장될 파일 경로 및 이름 (예: 'raw_data/exchange_rates_2023.csv').
     """
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(destination_blob_name)
+    try:
+        print("--- [탐침 3] storage.Client() 호출 직전 ---")
+        client = storage.Client()
+        print("--- [탐침 4] storage.Client() 호출 완료 ---")
+        
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(destination_blob_name)
 
-    # DataFrame을 CSV 문자열로 변환 (메모리에서 처리)
-    csv_buffer = StringIO()
-    df.to_csv(csv_buffer, index=False)
-    
-    # GCS에 업로드
-    blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
-    print(f"DataFrame이 gs://{bucket_name}/{destination_blob_name} 에 성공적으로 업로드되었습니다.")
+        # DataFrame을 CSV 문자열로 변환 (메모리에서 처리)
+        csv_buffer = StringIO()
+        df.to_csv(csv_buffer, index=False)
+        
+        print("--- [탐침 5] GCS에 데이터 업로드 시도 ---")
+        # GCS에 업로드
+        blob.upload_from_string(csv_buffer.getvalue(), content_type='text/csv')
+        print("--- [탐침 6] GCS에 데이터 업로드 완료 ---")
+        print(f"DataFrame이 gs://{bucket_name}/{destination_blob_name} 에 성공적으로 업로드되었습니다.")
+    except Exception as e:
+        # 어떤 에러든 잡아서 로그에 남깁니다.
+        print(f"!!! upload_dataframe_to_gcs 함수에서 심각한 오류 발생: {e}")
+        # 실패 시 예외를 다시 발생시켜 Airflow Task를 실패 처리합니다.
+        raise
+
 
 def collect_and_upload_exchange_rates(target_date_str: str):
+    print("--- [DEBUG] Task 시작 ---")
     """
     ECOS API에서 환율 데이터를 수집하고 GCS에 업로드하는 전체 워크플로우를 실행합니다.
 
     Args:
         target_date_str (str): 처리할 데이터의 기준 날짜 (YYYYMMDD 형식).
     """
+    print("--- [DEBUG] Task 시작 ---")
     target_date = datetime.datetime.strptime(target_date_str, '%Y%m%d').date()
 
     # 3년 전 날짜 계산
@@ -134,9 +152,13 @@ def collect_and_upload_exchange_rates(target_date_str: str):
         print(f"총 {len(exchange_rates_df)}개의 데이터 포인트.")
 
         # GCS에 데이터 업로드
-        upload_dataframe_to_gcs(exchange_rates_df, GCS_BUCKET_NAME, f"raw_data/exchange_rates_{target_date_str}.csv")
+        gcs_blob_path = f"raw_data/exchange_rates_{target_date_str}.csv"
+        upload_dataframe_to_gcs(exchange_rates_df, GCS_BUCKET_NAME, gcs_blob_path)
+        # Airflow에서 XCom return 값으로 전체 gs 경로를 전달하여 Spark가 동일 파일을 읽게 함
+        return f"gs://{GCS_BUCKET_NAME}/{gcs_blob_path}"
     else:
         print("데이터를 가져오지 못했습니다.")
+        return None
 
 # --- 스크립트 실행 예시 (로컬 테스트용) --- #
 if __name__ == "__main__":

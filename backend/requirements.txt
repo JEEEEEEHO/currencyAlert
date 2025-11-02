@@ -18,3 +18,19 @@ redis==5.0.7
 pytest==8.3.2
 pytest-asyncio==0.23.8
 httpx==0.27.0
+
+# 환경변수 로드 라이브러리 (.env 파일 지원)
+python-dotenv==1.0.1
+
+# BigQuery 클라이언트 라이브러리
+# Google Cloud BigQuery에 접근하기 위한 공식 Python 클라이언트입니다
+google-cloud-bigquery==3.25.0
+google-auth==2.34.0
+
+# 재시도 로직 라이브러리
+# 외부 API 호출 시 재시도 로직을 쉽게 구현할 수 있게 해주는 라이브러리입니다
+tenacity==8.2.3
+
+# 구조화된 로깅 라이브러리
+# JSON 형식의 구조화된 로그를 쉽게 만들 수 있게 해주는 라이브러리입니다
+structlog==24.1.0

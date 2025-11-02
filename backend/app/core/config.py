@@ -4,8 +4,15 @@
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
+from pathlib import Path
 from typing import Optional
 from pydantic import Field
+
+# 프로젝트 루트 디렉토리 경로 찾기
+# 주니어 개발자님께: 이 파일은 backend/app/core/config.py에 있으므로,
+# backend 디렉토리에서 2단계 상위로 올라가면 프로젝트 루트가 됩니다.
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+ENV_FILE_PATH = PROJECT_ROOT / ".env"
 
 class Settings(BaseSettings):
     APP_NAME: str = "fx-alert"
@@ -45,6 +52,24 @@ class Settings(BaseSettings):
     # exchangerate.host API Key
     EXCHANGERATE_API_KEY: Optional[str] = Field(None, env="EXCHANGERATE_API_KEY")
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # BigQuery 설정
+    # GCP 프로젝트 ID입니다. BigQuery 데이터셋이 위치한 프로젝트를 지정합니다.
+    BIGQUERY_PROJECT_ID: Optional[str] = Field(None, env="BIGQUERY_PROJECT_ID", description="BigQuery 프로젝트 ID")
+    # BigQuery 데이터셋 이름입니다. Spark Job에서 사용한 데이터셋과 동일해야 합니다.
+    BIGQUERY_DATASET: str = Field(default="fx_alert_data", env="BIGQUERY_DATASET", description="BigQuery 데이터셋 이름")
+    # BigQuery 테이블 이름입니다. Spark Job에서 사용한 테이블명과 동일해야 합니다.
+    BIGQUERY_TABLE: str = Field(default="usd_krw_daily_avg", env="BIGQUERY_TABLE", description="BigQuery 테이블 이름")
+    # GCP 서비스 계정 키 파일 경로입니다. BigQuery 인증에 사용됩니다.
+    # 로컬에서는 절대 경로나 상대 경로를 사용할 수 있습니다.
+    # 환경변수 GOOGLE_APPLICATION_CREDENTIALS도 지원됩니다.
+    GCP_SERVICE_ACCOUNT_KEY_PATH: Optional[str] = Field(None, env="GCP_SERVICE_ACCOUNT_KEY_PATH", description="GCP 서비스 계정 키 파일 경로")
+
+    model_config = SettingsConfigDict(
+        # 주니어 개발자님께: env_file에 절대 경로를 지정하면 backend 디렉토리에서 실행해도
+        # 프로젝트 루트의 .env 파일을 찾을 수 있습니다.
+        env_file=str(ENV_FILE_PATH) if ENV_FILE_PATH.exists() else ".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
 settings = Settings()

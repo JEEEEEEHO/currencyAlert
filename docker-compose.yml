@@ -58,19 +58,22 @@ services:
     image: postgres:13
     container_name: airflow_postgres
     environment:
-      - POSTGRES_USER=airflow
-      - POSTGRES_PASSWORD=airflow
-      - POSTGRES_DB=airflow
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
+    networks: [fxnet]
+
 
   airflow-redis:
     image: redis:7
     container_name: airflow_redis
     ports:
       - "6380:6379"
+    networks: [fxnet]
 
   airflow-init:
     build:
@@ -84,12 +87,17 @@ services:
       - airflow-redis
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
       - AIRFLOW__CELERY__BROKER_URL=redis://airflow-redis:6379/1
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/keys/${GCP_KEY_FILENAME}
+      - ECOS_API_KEY=${ECOS_API_KEY}
     command: >
       bash -c "airflow db init &&
       airflow users create --role Admin --username airflow --password airflow --firstname Anonymous --lastname User --email admin@example.org"
+    volumes:
+      - ./airflow/keys:/opt/airflow/keys       # ← (선택) 키도 보이게
+    networks: [fxnet]   
 
   airflow-webserver:
     build:
@@ -100,7 +108,10 @@ services:
     container_name: airflow_webserver
     restart: always
     depends_on:
+      - postgres
+      - airflow-redis
       - airflow-scheduler
+      - spark-master
     ports:
       - "8080:8080"
     volumes:
@@ -108,10 +119,16 @@ services:
       - ./airflow/keys:/opt/airflow/keys
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
       - AIRFLOW__CELERY__BROKER_URL=redis://airflow-redis:6379/1
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/keys/${GCP_KEY_FILENAME}
+      - BIGQUERY_PROJECT_ID=${BIGQUERY_PROJECT_ID}
+      - GCP_SERVICE_ACCOUNT_KEY_PATH=/opt/airflow/keys/${GCP_KEY_FILENAME}
+      - ECOS_API_KEY=${ECOS_API_KEY}
+      - AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8080
     command: ["airflow", "webserver"]
+    networks: [fxnet]
 
   airflow-scheduler:
     build:
@@ -124,39 +141,112 @@ services:
     depends_on:
       - postgres
       - airflow-redis
+      - spark-master
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/keys:/opt/airflow/keys
+      - ./spark_jobs:/opt/spark/work-dir
+      - ./spark_jars:/opt/spark-3.5.1-bin-hadoop3/jars-extra  # ← JAR 마운트
     environment:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
       - AIRFLOW__CELERY__BROKER_URL=redis://airflow-redis:6379/1
-      - GCP_SERVICE_ACCOUNT_KEY_PATH=/opt/airflow/keys/fx-alert-currency-9df38b972814.json
-      - BIGQUERY_PROJECT_ID=fx-alert-currency
+      - GCP_SERVICE_ACCOUNT_KEY_PATH=/opt/airflow/keys/${GCP_KEY_FILENAME}
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/keys/${GCP_KEY_FILENAME}
+      - BIGQUERY_PROJECT_ID=${BIGQUERY_PROJECT_ID}
+      - ECOS_API_KEY=${ECOS_API_KEY}
+      - AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8080
+      - PYSPARK_PYTHON=/usr/bin/python3
+      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
     command: ["airflow", "scheduler"]
+    networks: [fxnet]
+
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    container_name: airflow_worker
+    restart: always
+    depends_on:
+      - postgres
+      - airflow-redis
+      - airflow-scheduler
+      - spark-master
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/keys:/opt/airflow/keys
+      - ./spark_jobs:/opt/spark/work-dir
+      - ./spark_jars:/opt/spark-3.5.1-bin-hadoop3/jars-extra  # ← JAR 마운트
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}
+      - AIRFLOW__CELERY__BROKER_URL=redis://airflow-redis:6379/1
+      - GCP_SERVICE_ACCOUNT_KEY_PATH=/opt/airflow/keys/${GCP_KEY_FILENAME}
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/airflow/keys/${GCP_KEY_FILENAME}
+      - BIGQUERY_PROJECT_ID=${BIGQUERY_PROJECT_ID}
+      - ECOS_API_KEY=${ECOS_API_KEY}
+      - AIRFLOW__WEBSERVER__BASE_URL=http://localhost:8080
+      - PYSPARK_PYTHON=/usr/bin/python3
+      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3
+    command: ["airflow", "celery", "worker"]
+    networks: [fxnet]
 
   spark-master:
-    image: apache/spark:3.5.1-scala2.12-java17-python3-ubuntu
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
     container_name: spark-master
+    hostname: spark-master
     ports:
-      - "8081:8080"
       - "7077:7077"
+      - "8081:8080"                  # 외부 8081 -> 내부 8080
+    env_file: [.env]
+    environment:
+      - GCP_SERVICE_ACCOUNT_KEY_PATH=/opt/spark/keys/${GCP_KEY_FILENAME}
+      - PYSPARK_PYTHON=/usr/bin/python3.12
+      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3.12
     volumes:
       - ./spark_jobs:/opt/spark/work-dir
+      - ./airflow/keys:/opt/spark/keys
+      - ./airflow/keys:/opt/airflow/keys
+      - ./spark_jars:/opt/spark-3.5.1-bin-hadoop3/jars-extra  # JAR 파일들도 마운트
+    networks: [fxnet]
+    command:
+      ["/opt/spark/bin/spark-class","org.apache.spark.deploy.master.Master",
+       "--host","spark-master","--port","7077","--webui-port","8080"]
 
   spark-worker:
-    image: apache/spark:3.5.1-scala2.12-java17-python3-ubuntu
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
     container_name: spark-worker
-    depends_on:
-      - spark-master
+    depends_on: [spark-master]
     ports:
       - "8082:8080"
+    env_file: [.env]
+    environment:
+      - GCP_SERVICE_ACCOUNT_KEY_PATH=/opt/spark/keys/${GCP_KEY_FILENAME}
+      - PYSPARK_PYTHON=/usr/bin/python3.12
+      - PYSPARK_DRIVER_PYTHON=/usr/bin/python3.12
     volumes:
       - ./spark_jobs:/opt/spark/work-dir
-    command: "/opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
+      - ./airflow/keys:/opt/spark/keys
+      - ./airflow/keys:/opt/airflow/keys
+      - ./spark_jars:/opt/spark-3.5.1-bin-hadoop3/jars-extra  # JAR 파일들도 마운트
+    networks: [fxnet]
+    command:
+      ["/opt/spark/bin/spark-class","org.apache.spark.deploy.worker.Worker",
+       "spark://spark-master:7077"]
 
 volumes:
   mongo_data:
   postgres-db-volume:
+
+networks:
+  fxnet: 

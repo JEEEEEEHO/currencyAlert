@@ -264,3 +264,6 @@ frontend/.vite/
 *.temp_venv/
 venv_wsl/*.example
 temp_venv/
+test/
+test_*.py
+*./tests
