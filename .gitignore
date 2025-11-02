@@ -266,4 +266,4 @@ venv_wsl/*.example
 temp_venv/
 test/
 test_*.py
-*./tests
+backend/tests/test_*.py
