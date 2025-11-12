@@ -63,3 +63,10 @@ class DataValidationError(CurrencyServiceError):
         self.message = message
         super().__init__(f"데이터 검증 실패 [{field_name}]: {message}")
 
+
+
+
+
+
+
+
